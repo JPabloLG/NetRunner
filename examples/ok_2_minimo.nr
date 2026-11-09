@@ -1,0 +1,3 @@
+TARGET NODE 0x1 {
+    CLEAR LOGS;
+}

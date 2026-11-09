@@ -1,0 +1,3 @@
+TARGET NODE 0xad23d
+    SCAN PORTS;
+}
