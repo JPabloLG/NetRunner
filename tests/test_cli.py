@@ -51,8 +51,15 @@ def test_archivo_valido(valido: Path) -> None:
     r = correr(str(valido), "--cli")
     assert r.returncode == 0, r.stderr
     assert "<programa>" in r.stdout
-    assert "<programa'>" in r.stdout
+    assert "<secuencia'>" in r.stdout and "ε" in r.stdout
     assert "SCAN [TK_CMD @2:5]" in r.stdout
+
+
+def test_archivo_sin_flags_analiza_en_consola(valido: Path) -> None:
+    """Como en la sección 3.7 del documento: python main.py archivo.nr."""
+    r = correr(str(valido))
+    assert r.returncode == 0, r.stderr
+    assert "<programa>" in r.stdout
 
 
 def test_errores_mixtos(mixto: Path) -> None:
@@ -105,7 +112,7 @@ def test_exportar_dot_y_svg(valido: Path, tmp_path: Path) -> None:
 def test_exportar_simplificado(valido: Path, tmp_path: Path) -> None:
     dot = tmp_path / "s.dot"
     correr(str(valido), "--cli", "--simplificar", "--dot", str(dot))
-    assert "<programa'>" not in dot.read_text(encoding="utf-8")
+    assert "<secuencia'>" not in dot.read_text(encoding="utf-8")
 
 
 def test_no_exporta_con_errores(mixto: Path, tmp_path: Path) -> None:
@@ -140,7 +147,7 @@ def test_gui_sin_tkinter_muestra_ayuda() -> None:
                        text=True, encoding="utf-8", cwd=RAIZ, timeout=60)
     assert r.returncode == 1
     assert "sudo apt install python3-tk" in r.stderr
-    assert "--cli" in r.stderr
+    assert "python main.py archivo.nr" in r.stderr
 
 
 # --- Ejemplos oficiales (se omiten mientras estén vacíos) ------------------------

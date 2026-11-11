@@ -411,9 +411,9 @@ class GrammarPanel(ttk.Frame):
         interno.pack(fill="both", expand=True)
 
         for titulo, contenido in (
-            ("Gramática original", format_original_grammar()
+            ("Gramática G1", format_original_grammar()
              + "\n\n(con recursividad izquierda)"),
-            ("Gramática LL(1)", format_ll1_grammar()
+            ("Gramática G2 (LL(1))", format_ll1_grammar()
              + "\n\n(sin recursividad izquierda y factorizada)"),
             ("FIRST y FOLLOW", format_first_follow(LL1_GRAMMAR)),
         ):
@@ -442,7 +442,7 @@ class GrammarPanel(ttk.Frame):
         sub, arbol = _scrolled_tree(marco, columns=columnas, show="headings",
                                     selectmode="browse")
         arbol.heading("nt", text="No terminal", anchor="w")
-        arbol.column("nt", width=fonts.mono.measure("<condicional'>") + 20,
+        arbol.column("nt", width=fonts.mono.measure("<lista_instr'>") + 20,
                      stretch=False, anchor="w")
         for col, terminal in zip(columnas[1:], columnas_t):
             arbol.heading(col, text=terminal)

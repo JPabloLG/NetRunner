@@ -46,7 +46,7 @@ _TERMINALES: dict[TokenType, str] = {
     TokenType.TK_MENOR: "<",
     TokenType.TK_IGUAL: "==",
     TokenType.HEX_ADDR: "HEX_ADDR",
-    TokenType.TK_NUM: "TK_NUM",
+    TokenType.TK_NUM: "NUM",  # en G2 el terminal se llama NUM
     TokenType.STRING: "STRING",
     TokenType.EOF: "$",
     TokenType.COMENTARIO: "COMENTARIO",

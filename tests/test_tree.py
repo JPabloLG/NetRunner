@@ -19,14 +19,14 @@ from netrunner.tree_layout import layout_tree
 
 PROGRAMA = (
     'TARGET NODE 0xad23d {\n'
-    '    SCAN PORT 22 -> INJECT PAYLOAD "a\\b";\n'
+    '    CONNECT PORT 22 -> INJECT PAYLOAD "a\\b";\n'
     '    IF ICE_LEVEL < 3 THEN {\n'
     '        BYPASS FIREWALL;\n'
     '    } ELSE {\n'
     '        CLEAR LOGS;\n'
     '    }\n'
+    '    EXFIL DATA;\n'
     '}\n'
-    'TARGET NODE 0xFF { EXFIL DATA; }\n'
 )
 
 
@@ -53,7 +53,7 @@ def test_propiedades_de_nodo() -> None:
     raiz = arbol()
     assert raiz.symbol == "<programa>" and raiz.label == "<programa>"
     assert not raiz.is_terminal and not raiz.is_epsilon
-    hoja = raiz.children[0].children[0]
+    hoja = raiz.children[0]
     assert hoja.symbol == "TK_CMD" and hoja.label == "TARGET" and hoja.is_terminal
     eps = Node("ε")
     assert eps.is_epsilon and eps.label == "ε" and not eps.is_terminal
@@ -62,24 +62,23 @@ def test_propiedades_de_nodo() -> None:
 
 def test_arbol_completo_conserva_auxiliares_y_epsilon() -> None:
     s = simbolos(arbol())
-    for aux in ("<programa'>", "<lista_sent'>", "<secuencia'>", "<accion'>",
-                "<condicional'>"):
+    for aux in ("<lista_instr'>", "<secuencia'>"):
         assert aux in s
     assert "ε" in s
 
 
-def test_estructura_anidada_de_lista_sent() -> None:
+def test_estructura_anidada_de_lista_instr() -> None:
     raiz = arbol("TARGET NODE 0x1 { SCAN PORTS; CLEAR LOGS; EXFIL DATA; }")
-    lista = raiz.children[0].children[3].children[1]
-    assert lista.symbol == "<lista_sent>"
+    lista = raiz.children[3].children[1]
+    assert lista.symbol == "<lista_instr>"
     profundidad = 0
     nodo = lista.children[1]
-    while nodo.symbol == "<lista_sent'>":
+    while nodo.symbol == "<lista_instr'>":
         profundidad += 1
         if nodo.children[0].is_epsilon:
             break
         nodo = nodo.children[1]
-    assert profundidad == 3  # dos sentencias más + ε
+    assert profundidad == 3  # dos instrucciones más + ε
 
 
 def test_frontera_igual_a_los_tokens() -> None:
@@ -105,8 +104,8 @@ def test_simplificacion() -> None:
 
 def test_simplificacion_aplana_sentencias() -> None:
     simple = simplify(arbol("TARGET NODE 0x1 { SCAN PORTS; CLEAR LOGS; EXFIL DATA; }"))
-    lista = simple.children[0].children[3].children[1]
-    assert [h.symbol for h in lista.children] == ["<sentencia>"] * 3
+    lista = simple.children[3].children[1]
+    assert [h.symbol for h in lista.children] == ["<instruccion>"] * 3
 
 
 # --- ASCII y DOT ----------------------------------------------------------------

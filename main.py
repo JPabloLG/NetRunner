@@ -1,9 +1,10 @@
 """Punto de entrada de NetRunner Analyzer.
 
 Uso:
+    python main.py archivo.nr           analiza el archivo en la consola
+                                        (imprime el árbol o los errores)
     python main.py                      abre la interfaz gráfica
-    python main.py archivo.nr           abre la interfaz gráfica con el archivo
-    python main.py archivo.nr --cli     analiza el archivo en la consola
+    python main.py archivo.nr --gui     abre la interfaz gráfica con el archivo
 
 El modo consola no importa Tkinter: la GUI solo se importa al iniciarla.
 NetRunner Analyzer analiza el código, nunca lo ejecuta.
@@ -40,7 +41,8 @@ def construir_argumentos() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="main.py",
         description=("NetRunner Analyzer: analizador léxico y sintáctico de "
-                     "NetRunner DSL. Sin --cli abre la interfaz gráfica."),
+                     "NetRunner DSL. Con un archivo lo analiza en la consola; "
+                     "sin archivo (o con --gui) abre la interfaz gráfica."),
         formatter_class=_FormatoEspanol,
         add_help=False,
     )
@@ -50,7 +52,9 @@ def construir_argumentos() -> argparse.ArgumentParser:
                     help="mostrar esta ayuda y salir")
     ap.add_argument("archivo", nargs="?", help="archivo .nr a analizar")
     ap.add_argument("--cli", action="store_true",
-                    help="analizar en la consola en lugar de abrir la GUI")
+                    help="analizar en la consola (es lo predeterminado con archivo)")
+    ap.add_argument("--gui", action="store_true",
+                    help="abrir el archivo en la interfaz gráfica")
     ap.add_argument("--tokens", action="store_true",
                     help="mostrar la tabla de tokens reconocidos")
     ap.add_argument("--simplificar", action="store_true",
@@ -146,7 +150,7 @@ def ejecutar_gui(archivo: str | None) -> int:
             "No se encontró Tkinter, necesario para la interfaz gráfica.\n"
             "En Debian/Ubuntu instálalo con:  sudo apt install python3-tk\n"
             "Mientras tanto puedes usar el modo consola:  "
-            "python main.py archivo.nr --cli",
+            "python main.py archivo.nr",
             file=sys.stderr,
         )
         return EXIT_ERRORES
@@ -173,9 +177,9 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
     args = construir_argumentos().parse_args(argv)
-    if args.cli:
-        return ejecutar_cli(args)
-    return ejecutar_gui(args.archivo)
+    if args.gui or (not args.archivo and not args.cli):
+        return ejecutar_gui(args.archivo)
+    return ejecutar_cli(args)
 
 
 if __name__ == "__main__":

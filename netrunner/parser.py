@@ -1,15 +1,16 @@
 """Analizador sintáctico predictivo LL(1) por descenso recursivo.
 
-Cada no terminal de ``LL1_GRAMMAR`` tiene un método ``_nombre``. Las
-decisiones se toman solo con el token actual (``self.tok.terminal``) y los
-conjuntos FIRST/FOLLOW calculados en ``grammar.py``; nunca hay retroceso.
+Implementa la gramática G2 del documento (reglas R1-R28). Cada no terminal
+tiene un método ``_nombre``. Las decisiones se toman solo con el token actual
+(``self.tok.terminal``) y los conjuntos FIRST/FOLLOW calculados en
+``grammar.py``; nunca hay retroceso.
 
-Los no terminales recursivos por la derecha (``<programa'>``,
-``<lista_sent'>``, ``<secuencia'>``) se analizan con bucles ``while``, pero
-el árbol conserva la estructura anidada de la derivación.
+Los no terminales primados recursivos por la derecha (``<lista_instr'>``,
+``<secuencia'>``) se analizan con bucles ``while``, pero el árbol conserva la
+estructura anidada de la derivación (con sus nodos primados y ε).
 
-Ante un error se usa recuperación en modo pánico (nivel sentencia y nivel
-objetivo). Si hubo algún error, el árbol resultante es None.
+Ante un error se usa recuperación en modo pánico (nivel instrucción y nivel
+programa). Si hubo algún error, el árbol resultante es None.
 """
 
 from __future__ import annotations
@@ -40,24 +41,20 @@ def _ordenados(simbolos: set[str]) -> list[str]:
     return [t for t in _ORDEN if t in simbolos]
 
 
-FIRST_SENTENCIA: list[str] = _ordenados(_FIRST["<sentencia>"])
-FIRST_SECUENCIA: list[str] = _ordenados(_FIRST["<secuencia>"])
-FOLLOW_CONDICIONAL_P: list[str] = _ordenados(_FOLLOW["<condicional'>"])
+FIRST_INSTRUCCION: list[str] = _ordenados(_FIRST["<instruccion>"])
+FIRST_SECUENCIA: list[str] = _ordenados(_FIRST["<secuencia>"])  # ACC
+FOLLOW_RESTO_IF: list[str] = _ordenados(_FOLLOW["<resto_if>"])
 
-# <accion> ::= SCAN <accion'> | resto de alternativas (todas terminales).
-ACCIONES_SIMPLES: dict[str, list[str]] = {
-    "CONNECT": ["PORT", "TK_NUM"],
-    "BYPASS": ["FIREWALL"],
-    "DISABLE": ["FIREWALL"],
-    "INJECT": ["PAYLOAD", "STRING"],
-    "EXECUTE": ["SCRIPT", "STRING"],
-    "EXFIL": ["DATA"],
-    "CLEAR": ["LOGS"],
+# R11-R18: <accion> ::= primera palabra + resto. Se toman de LL1_GRAMMAR,
+# así que la gramática no se repite a mano.
+ACCIONES: dict[str, list[str]] = {
+    derecha[0]: derecha[1:] for izquierda, derecha in LL1_GRAMMAR
+    if izquierda == "<accion>"
 }
 
 _DESCRIPCIONES = {
     "HEX_ADDR": "una dirección hexadecimal",
-    "TK_NUM": "un número entero",
+    "NUM": "un número entero",
     "STRING": "una cadena entre comillas",
     END: "fin de archivo",
 }
@@ -80,13 +77,13 @@ class ParseResult:
 def describe_expected(expected: set[str]) -> str:
     """Texto legible del conjunto de terminales esperados.
 
-    Si están los nueve de FIRST(sentencia) se resumen como "una instrucción".
+    Si están los nueve de FIRST(instruccion) se resumen como "una instrucción".
     """
     partes: list[str] = []
     resto = set(expected)
-    if set(FIRST_SENTENCIA) <= resto:
+    if set(FIRST_INSTRUCCION) <= resto:
         partes.append("una instrucción")
-        resto -= set(FIRST_SENTENCIA)
+        resto -= set(FIRST_INSTRUCCION)
     for t in _ordenados(resto):
         partes.append(_DESCRIPCIONES.get(t, f"'{t}'"))
     if len(partes) == 1:
@@ -186,35 +183,22 @@ class Parser:
     # Recuperación en modo pánico
     # ------------------------------------------------------------------
 
-    def _objetivo_seguro(self) -> Node:
-        """<objetivo> con recuperación: descarta hasta TARGET o EOF."""
+    def _instruccion_segura(self) -> Node:
+        """<instruccion> con recuperación: descarta hasta ';', '}', FIRST(instruccion) o EOF."""
         inicio = self.pos
         try:
-            return self._objetivo()
+            return self._instruccion()
         except ParseError:
-            if self.pos == inicio and not self.at_eof():
-                self.advance()  # garantiza progreso
-            while not self.at_eof() and self.tok.terminal != "TARGET":
-                self.advance()
-            self.expected.clear()
-            return Node("<objetivo>")
+            self._sincronizar_instruccion(inicio)
+            return Node("<instruccion>")
 
-    def _sentencia_segura(self) -> Node:
-        """<sentencia> con recuperación: descarta hasta ';', '}', FIRST(sentencia) o EOF."""
-        inicio = self.pos
-        try:
-            return self._sentencia()
-        except ParseError:
-            self._sincronizar_sentencia(inicio)
-            return Node("<sentencia>")
-
-    def _sincronizar_sentencia(self, inicio: int) -> None:
+    def _sincronizar_instruccion(self, inicio: int) -> None:
         while not self.at_eof():
             t = self.tok.terminal
             if t == ";":
                 self.advance()
                 break
-            if t == "}" or t in FIRST_SENTENCIA:
+            if t == "}" or t in FIRST_INSTRUCCION:
                 if self.pos == inicio and t != "}":
                     self.advance()  # garantiza progreso
                     continue
@@ -223,75 +207,68 @@ class Parser:
         self.expected.clear()
 
     # ------------------------------------------------------------------
-    # Un método por no terminal
+    # Un método por no terminal de G2
     # ------------------------------------------------------------------
 
     def _programa(self) -> Node:
-        """1. <programa> ::= <objetivo> <programa'>
-           2. <programa'> ::= <objetivo> <programa'> | ε   (bucle)"""
-        nodo = Node("<programa>", [self._objetivo_seguro()])
-        padre = nodo
-        while True:
-            if self.check("TARGET"):
-                aux = Node("<programa'>", [self._objetivo_seguro()])
-                padre.children.append(aux)
-                padre = aux
-            elif self.check(END):
-                padre.children.append(Node("<programa'>", [epsilon()]))
+        """R1. <programa> ::= TARGET NODE HEX_ADDR <bloque>"""
+        nodo = Node("<programa>")
+        try:
+            for t in ("TARGET", "NODE", "HEX_ADDR"):
+                nodo.children.append(self.expect(t))
+        except ParseError:
+            # Modo pánico: se descarta hasta '{' para analizar el bloque igual.
+            while not self.at_eof() and self.tok.terminal != "{":
+                self.advance()
+            self.expected.clear()
+            if self.at_eof():
                 return nodo
-            else:
-                # Token fuera de un objetivo: se descarta hasta TARGET o EOF.
-                self.report()
-                while not self.at_eof() and self.tok.terminal != "TARGET":
-                    self.advance()
-                self.expected.clear()
-
-    def _objetivo(self) -> Node:
-        """3. <objetivo> ::= TARGET NODE HEX_ADDR <bloque>"""
-        return Node("<objetivo>", [
-            self.expect("TARGET"),
-            self.expect("NODE"),
-            self.expect("HEX_ADDR"),
-            self._bloque(),
-        ])
+        try:
+            nodo.children.append(self._bloque())
+        except ParseError:
+            return nodo
+        # Después del programa solo puede venir el fin de archivo ($).
+        if not self.check(END):
+            self.report()
+        return nodo
 
     def _bloque(self) -> Node:
-        """4. <bloque> ::= { <lista_sent> }"""
+        """R2. <bloque> ::= { <lista_instr> }"""
         abre = self.expect("{")
-        lista = self._lista_sent()
+        lista = self._lista_instr()
         return Node("<bloque>", [abre, lista, self.expect("}")])
 
-    def _lista_sent(self) -> Node:
-        """5. <lista_sent> ::= <sentencia> <lista_sent'>
-           6. <lista_sent'> ::= <sentencia> <lista_sent'> | ε   (bucle)"""
-        nodo = Node("<lista_sent>", [self._sentencia_segura()])
+    def _lista_instr(self) -> Node:
+        """R3. <lista_instr> ::= <instruccion> <lista_instr'>
+           R4-R5. <lista_instr'> ::= <instruccion> <lista_instr'> | ε   (bucle)"""
+        nodo = Node("<lista_instr>", [self._instruccion_segura()])
         padre = nodo
         while True:
-            if self.check_any(FIRST_SENTENCIA):
-                aux = Node("<lista_sent'>", [self._sentencia_segura()])
+            if self.check_any(FIRST_INSTRUCCION):
+                aux = Node("<lista_instr'>", [self._instruccion_segura()])
                 padre.children.append(aux)
                 padre = aux
             elif self.check("}") or self.at_eof():
-                # ε; si es EOF, el expect('}') de <bloque> informará el error.
-                padre.children.append(Node("<lista_sent'>", [epsilon()]))
+                # R5 (ε); si es EOF, el expect('}') de <bloque> informará el error.
+                padre.children.append(Node("<lista_instr'>", [epsilon()]))
                 return nodo
             else:
-                # Basura dentro del bloque: error y recuperación de sentencia.
+                # Basura dentro del bloque: error y recuperación de instrucción.
                 self.report()
-                self._sincronizar_sentencia(self.pos)
+                self._sincronizar_instruccion(self.pos)
 
-    def _sentencia(self) -> Node:
-        """7. <sentencia> ::= <secuencia> ; | <condicional>"""
+    def _instruccion(self) -> Node:
+        """R6-R7. <instruccion> ::= <secuencia> ; | <condicional>"""
         if self.check_any(FIRST_SECUENCIA):
             secuencia = self._secuencia()
-            return Node("<sentencia>", [secuencia, self.expect(";")])
+            return Node("<instruccion>", [secuencia, self.expect(";")])
         if self.check("IF"):
-            return Node("<sentencia>", [self._condicional()])
+            return Node("<instruccion>", [self._condicional()])
         self.fail()
 
     def _secuencia(self) -> Node:
-        """8. <secuencia> ::= <accion> <secuencia'>
-           9. <secuencia'> ::= -> <accion> <secuencia'> | ε   (bucle)"""
+        """R8. <secuencia> ::= <accion> <secuencia'>
+           R9-R10. <secuencia'> ::= -> <accion> <secuencia'> | ε   (bucle)"""
         nodo = Node("<secuencia>", [self._accion()])
         padre = nodo
         while True:
@@ -307,62 +284,52 @@ class Parser:
                 self.fail()
 
     def _accion(self) -> Node:
-        """10. <accion> ::= SCAN <accion'> | CONNECT PORT TK_NUM | ..."""
-        if self.check("SCAN"):
-            return Node("<accion>", [self.expect("SCAN"), self._accion_p()])
-        for primero, resto in ACCIONES_SIMPLES.items():
+        """R11-R18. <accion> ::= SCAN PORTS | CONNECT PORT NUM | BYPASS FIREWALL | ..."""
+        for primero, resto in ACCIONES.items():
             if self.check(primero):
                 hojas = [self.expect(primero)] + [self.expect(t) for t in resto]
                 return Node("<accion>", hojas)
         self.fail()
 
-    def _accion_p(self) -> Node:
-        """11. <accion'> ::= PORTS | PORT TK_NUM"""
-        if self.check("PORTS"):
-            return Node("<accion'>", [self.expect("PORTS")])
-        if self.check("PORT"):
-            return Node("<accion'>", [self.expect("PORT"), self.expect("TK_NUM")])
-        self.fail()
-
     def _condicional(self) -> Node:
-        """12. <condicional> ::= IF <condicion> THEN <bloque> <condicional'>"""
+        """R19. <condicional> ::= IF <condicion> THEN <bloque> <resto_if>"""
         si = self.expect("IF")
         condicion = self._condicion()
         entonces = self.expect("THEN")
         bloque = self._bloque()
         return Node("<condicional>", [si, condicion, entonces, bloque,
-                                      self._condicional_p()])
+                                      self._resto_if()])
 
-    def _condicional_p(self) -> Node:
-        """13. <condicional'> ::= ELSE <bloque> | ε"""
+    def _resto_if(self) -> Node:
+        """R20-R21. <resto_if> ::= ELSE <bloque> | ε"""
         if self.check("ELSE"):
             sino = self.expect("ELSE")
-            return Node("<condicional'>", [sino, self._bloque()])
-        if self.check_any(FOLLOW_CONDICIONAL_P):
-            return Node("<condicional'>", [epsilon()])
+            return Node("<resto_if>", [sino, self._bloque()])
+        if self.check_any(FOLLOW_RESTO_IF):
+            return Node("<resto_if>", [epsilon()])
         self.fail()
 
     def _condicion(self) -> Node:
-        """14. <condicion> ::= ICE_LEVEL <comp> TK_NUM | FIREWALL == <estado>"""
+        """R22-R23. <condicion> ::= ICE_LEVEL <op_rel> NUM | FIREWALL == <estado>"""
         if self.check("ICE_LEVEL"):
             hoja = self.expect("ICE_LEVEL")
-            comp = self._comp()
-            return Node("<condicion>", [hoja, comp, self.expect("TK_NUM")])
+            op_rel = self._op_rel()
+            return Node("<condicion>", [hoja, op_rel, self.expect("NUM")])
         if self.check("FIREWALL"):
             hoja = self.expect("FIREWALL")
             igual = self.expect("==")
             return Node("<condicion>", [hoja, igual, self._estado()])
         self.fail()
 
-    def _comp(self) -> Node:
-        """15. <comp> ::= > | < | =="""
+    def _op_rel(self) -> Node:
+        """R24-R26. <op_rel> ::= > | < | =="""
         for t in (">", "<", "=="):
             if self.check(t):
-                return Node("<comp>", [self.expect(t)])
+                return Node("<op_rel>", [self.expect(t)])
         self.fail()
 
     def _estado(self) -> Node:
-        """16. <estado> ::= ACTIVE | INACTIVE"""
+        """R27-R28. <estado> ::= ACTIVE | INACTIVE"""
         for t in ("ACTIVE", "INACTIVE"):
             if self.check(t):
                 return Node("<estado>", [self.expect(t)])

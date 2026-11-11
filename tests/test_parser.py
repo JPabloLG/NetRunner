@@ -35,10 +35,10 @@ def ok(src: str) -> ParseResult:
     "src",
     [
         "TARGET NODE 0x1 { SCAN PORTS; }",
-        "TARGET NODE 0x1 { SCAN PORT 22; CONNECT PORT 8080; BYPASS FIREWALL; "
+        "TARGET NODE 0x1 { SCAN PORTS; CONNECT PORT 8080; BYPASS FIREWALL; "
         "DISABLE FIREWALL; INJECT PAYLOAD \"p\"; EXECUTE SCRIPT \"s\"; "
         "EXFIL DATA; CLEAR LOGS; }",
-        "TARGET NODE 0x1 { SCAN PORTS -> SCAN PORT 1 -> EXFIL DATA -> CLEAR LOGS; }",
+        "TARGET NODE 0x1 { SCAN PORTS -> CONNECT PORT 1 -> EXFIL DATA -> CLEAR LOGS; }",
         "TARGET NODE 0x1 { IF FIREWALL == ACTIVE THEN { DISABLE FIREWALL; } }",
         "TARGET NODE 0x1 { IF FIREWALL == INACTIVE THEN { SCAN PORTS; } "
         "ELSE { BYPASS FIREWALL; } }",
@@ -57,19 +57,29 @@ def test_programas_validos(src: str) -> None:
     assert frontier(r.tree) == [t.lexeme for t in Lexer(src).tokenize().tokens[:-1]]
 
 
-def test_objetivos_multiples() -> None:
-    r = ok("TARGET NODE 0x1 { SCAN PORTS; } TARGET NODE 0x2 { CLEAR LOGS; } "
-           "TARGET NODE 0x3 { EXFIL DATA; }")
-    objetivos = [n for n in _preorden(r.tree) if n.symbol == "<objetivo>"]
-    assert len(objetivos) == 3
+def test_un_solo_target_por_programa() -> None:
+    """R1: un programa tiene exactamente un TARGET."""
+    _, r = analizar("TARGET NODE 0x1 { SCAN PORTS; } TARGET NODE 0x2 { CLEAR LOGS; }")
+    assert r.tree is None
+    assert [e.message for e in r.errors] == [
+        "Se esperaba fin de archivo, pero se encontró 'TARGET'"
+    ]
 
 
-def _preorden(raiz):
-    pila = [raiz]
-    while pila:
-        n = pila.pop()
-        yield n
-        pila.extend(reversed(n.children))
+def test_scan_port_num_no_existe_en_g2() -> None:
+    assert sintacticos("TARGET NODE 0x1 { SCAN PORT 22; }") == [
+        "Se esperaba 'PORTS', pero se encontró 'PORT'"
+    ]
+
+
+def test_arbol_usa_nombres_de_g2() -> None:
+    from netrunner.tree import preorder
+
+    r = ok("TARGET NODE 0x1 { IF ICE_LEVEL > 2 THEN { SCAN PORTS; } CLEAR LOGS; }")
+    simbolos = {n.symbol for n, _ in preorder(r.tree)}
+    assert {"<programa>", "<bloque>", "<lista_instr>", "<lista_instr'>",
+            "<instruccion>", "<secuencia>", "<secuencia'>", "<accion>",
+            "<condicional>", "<resto_if>", "<condicion>", "<op_rel>"} <= simbolos
 
 
 # --- Errores ------------------------------------------------------------------
@@ -123,14 +133,14 @@ def test_if_sin_then() -> None:
     [
         ("TARGET NODE { SCAN PORTS; }",
          "Se esperaba una dirección hexadecimal, pero se encontró '{'"),
-        ("TARGET NODE 0x1 { SCAN PORT; }",
+        ("TARGET NODE 0x1 { CONNECT PORT; }",
          "Se esperaba un número entero, pero se encontró ';'"),
         ("TARGET NODE 0x1 { INJECT PAYLOAD; }",
          "Se esperaba una cadena entre comillas, pero se encontró ';'"),
         ("TARGET NODE 0x1 { SCAN PORTS }",
          "Se esperaba ';' o '->', pero se encontró '}'"),
         ("TARGET NODE 0x1 { SCAN DATA; }",
-         "Se esperaba 'PORT' o 'PORTS', pero se encontró 'DATA'"),
+         "Se esperaba 'PORTS', pero se encontró 'DATA'"),
         ("TARGET NODE 0x1 { IF ICE_LEVEL 3 THEN { SCAN PORTS; } }",
          "Se esperaba '==', '>' o '<', pero se encontró '3'"),
         ("TARGET NODE 0x1 { IF FIREWALL == 3 THEN { SCAN PORTS; } }",
@@ -148,34 +158,43 @@ def test_mensajes(src: str, mensaje: str) -> None:
 def test_describe_expected() -> None:
     assert describe_expected({"$"}) == "fin de archivo"
     assert describe_expected({"TARGET", "$"}) == "'TARGET' o fin de archivo"
-    assert describe_expected({"HEX_ADDR", "TK_NUM", "STRING"}) == (
+    assert describe_expected({"HEX_ADDR", "NUM", "STRING"}) == (
         "una dirección hexadecimal, un número entero o una cadena entre comillas"
     )
 
 
-def test_token_fuera_de_objetivo() -> None:
+def test_tokens_fuera_del_programa() -> None:
     _, r = analizar("SCAN PORTS; TARGET NODE 0x1 { SCAN PORTS; }")
-    assert [e.message for e in r.errors] == ["Se esperaba 'TARGET', pero se encontró 'SCAN'"]
-    _, r = analizar("TARGET NODE 0x1 { SCAN PORTS; } } TARGET NODE 0x2 { CLEAR LOGS; }")
+    assert r.errors[0].message == "Se esperaba 'TARGET', pero se encontró 'SCAN'"
+    _, r = analizar("TARGET NODE 0x1 { SCAN PORTS; } }")
     assert [e.message for e in r.errors] == [
-        "Se esperaba 'TARGET' o fin de archivo, pero se encontró '}'"
+        "Se esperaba fin de archivo, pero se encontró '}'"
     ]
 
 
-def test_recuperacion_nivel_sentencia() -> None:
+def test_cabecera_erronea_sigue_analizando_el_bloque() -> None:
+    """Modo pánico en <programa>: se salta hasta '{' y se analiza el bloque."""
+    _, r = analizar("TARGET NODE 255 { SCAN PORTS; CONNECT 22; }")
+    assert [e.message for e in r.errors] == [
+        "Se esperaba una dirección hexadecimal, pero se encontró '255'",
+        "Se esperaba 'PORT', pero se encontró '22'",
+    ]
+
+
+def test_recuperacion_nivel_instruccion() -> None:
     _, r = analizar(
         "TARGET NODE 0x1 {\n"
-        "  SCAN PORT;\n"           # error 1
+        "  CONNECT PORT;\n"        # error 1
         "  CLEAR LOGS;\n"
         "  CONNECT 22;\n"           # error 2
         "  EXFIL DATA;\n"
+        "  BYPASS;\n"               # error 3
         "}\n"
-        "TARGET NODE 0x2 { BYPASS; }\n"  # error 3
     )
     assert [(e.line, e.message) for e in r.errors] == [
         (2, "Se esperaba un número entero, pero se encontró ';'"),
         (4, "Se esperaba 'PORT', pero se encontró '22'"),
-        (7, "Se esperaba 'FIREWALL', pero se encontró ';'"),
+        (6, "Se esperaba 'FIREWALL', pero se encontró ';'"),
     ]
     assert r.tree is None
 
@@ -230,8 +249,9 @@ def test_2000_sentencias_sin_recursion() -> None:
     assert r.tree.count() > 2000
 
 
-def test_2000_objetivos() -> None:
-    ok("TARGET NODE 0x1 { SCAN PORTS; }\n" * 2000)
+def test_100_if_anidados() -> None:
+    ok("TARGET NODE 0x1 {" + " IF ICE_LEVEL > 1 THEN {" * 100 + " SCAN PORTS;"
+       + " }" * 100 + " }")
 
 
 VOCABULARIO = list(RESERVED_WORDS) + [
@@ -351,9 +371,9 @@ def _generar(rng, simbolo="<programa>", prof=0):
     if not alternativas:
         return [simbolo]
     if prof > 7:
-        # Alternativas que terminan pronto (sin abrir objetivos/bloques nuevos).
-        cortas = {"<programa'>": ["ε"], "<lista_sent'>": ["ε"], "<secuencia'>": ["ε"],
-                  "<condicional'>": ["ε"], "<sentencia>": ["<secuencia>", ";"],
+        # Alternativas que terminan pronto (sin abrir bloques nuevos).
+        cortas = {"<lista_instr'>": ["ε"], "<secuencia'>": ["ε"],
+                  "<resto_if>": ["ε"], "<instruccion>": ["<secuencia>", ";"],
                   "<accion>": ["EXFIL", "DATA"]}
         alternativas = [cortas.get(simbolo, alternativas[0])]
     salida = []
@@ -370,7 +390,7 @@ def _firma(raiz):
             for n, d in preorder(raiz)]
 
 
-LEXEMAS = {"TK_NUM": "22", "HEX_ADDR": "0x1F", "STRING": '"s"'}
+LEXEMAS = {"NUM": "22", "HEX_ADDR": "0x1F", "STRING": '"s"'}
 
 
 def test_descenso_recursivo_equivale_al_parser_por_tabla() -> None:

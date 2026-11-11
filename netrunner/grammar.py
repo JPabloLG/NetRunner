@@ -6,8 +6,7 @@ símbolo es terminal y coincide con ``Token.terminal``. La producción vacía
 se escribe ``["ε"]``.
 
 Cada alternativa ocupa una posición en la lista: ese índice (desde 0) es el
-que guarda la tabla LL(1). El número de regla que se muestra en la interfaz
-(1, 2, ..., 10a, 10b, ...) se deriva del orden de los no terminales.
+que guarda la tabla LL(1). La regla del documento es R(índice + 1): R1 ... R28.
 """
 
 from __future__ import annotations
@@ -19,10 +18,10 @@ Cell = tuple[str, str]
 EPSILON = "ε"
 END = "$"
 
-_ACCIONES_ORIGINAL: list[list[str]] = [
+# Las ocho acciones de <accion> (R11-R18), comunes a G1 y G2.
+_ACCIONES: list[list[str]] = [
     ["SCAN", "PORTS"],
-    ["SCAN", "PORT", "TK_NUM"],
-    ["CONNECT", "PORT", "TK_NUM"],
+    ["CONNECT", "PORT", "NUM"],
     ["BYPASS", "FIREWALL"],
     ["DISABLE", "FIREWALL"],
     ["INJECT", "PAYLOAD", "STRING"],
@@ -31,79 +30,51 @@ _ACCIONES_ORIGINAL: list[list[str]] = [
     ["CLEAR", "LOGS"],
 ]
 
+# G1 (sección 2.4 del documento): sin ambigüedad, pero con recursividad por
+# la izquierda y prefijos comunes; por eso su tabla predictiva tiene conflictos.
 ORIGINAL_GRAMMAR: Grammar = [
-    ("<programa>", ["<programa>", "<objetivo>"]),
-    ("<programa>", ["<objetivo>"]),
-    ("<objetivo>", ["TARGET", "NODE", "HEX_ADDR", "<bloque>"]),
-    ("<bloque>", ["{", "<lista_sent>", "}"]),
-    ("<lista_sent>", ["<lista_sent>", "<sentencia>"]),
-    ("<lista_sent>", ["<sentencia>"]),
-    ("<sentencia>", ["<secuencia>", ";"]),
-    ("<sentencia>", ["<condicional>"]),
+    ("<programa>", ["TARGET", "NODE", "HEX_ADDR", "<bloque>"]),
+    ("<bloque>", ["{", "<lista>", "}"]),
+    ("<lista>", ["<lista>", "<instruccion>"]),
+    ("<lista>", ["<instruccion>"]),
+    ("<instruccion>", ["<secuencia>", ";"]),
+    ("<instruccion>", ["<condicional>"]),
     ("<secuencia>", ["<secuencia>", "->", "<accion>"]),
     ("<secuencia>", ["<accion>"]),
-    *[("<accion>", derecha) for derecha in _ACCIONES_ORIGINAL],
+    *[("<accion>", derecha) for derecha in _ACCIONES],
     ("<condicional>", ["IF", "<condicion>", "THEN", "<bloque>"]),
     ("<condicional>", ["IF", "<condicion>", "THEN", "<bloque>", "ELSE", "<bloque>"]),
-    ("<condicion>", ["ICE_LEVEL", "<comp>", "TK_NUM"]),
-    ("<condicion>", ["FIREWALL", "==", "<estado>"]),
-    ("<comp>", [">"]),
-    ("<comp>", ["<"]),
-    ("<comp>", ["=="]),
-    ("<estado>", ["ACTIVE"]),
-    ("<estado>", ["INACTIVE"]),
+    ("<condicion>", ["ICE_LEVEL", ">", "NUM"]),
+    ("<condicion>", ["ICE_LEVEL", "<", "NUM"]),
+    ("<condicion>", ["ICE_LEVEL", "==", "NUM"]),
+    ("<condicion>", ["FIREWALL", "==", "ACTIVE"]),
+    ("<condicion>", ["FIREWALL", "==", "INACTIVE"]),
 ]
 
+# G2 (sección 2.8, Tabla 6): gramática final LL(1). La posición i de la
+# lista es la regla R(i+1).
 LL1_GRAMMAR: Grammar = [
-    # 1
-    ("<programa>", ["<objetivo>", "<programa'>"]),
-    # 2
-    ("<programa'>", ["<objetivo>", "<programa'>"]),
-    ("<programa'>", [EPSILON]),
-    # 3
-    ("<objetivo>", ["TARGET", "NODE", "HEX_ADDR", "<bloque>"]),
-    # 4
-    ("<bloque>", ["{", "<lista_sent>", "}"]),
-    # 5
-    ("<lista_sent>", ["<sentencia>", "<lista_sent'>"]),
-    # 6
-    ("<lista_sent'>", ["<sentencia>", "<lista_sent'>"]),
-    ("<lista_sent'>", [EPSILON]),
-    # 7
-    ("<sentencia>", ["<secuencia>", ";"]),
-    ("<sentencia>", ["<condicional>"]),
-    # 8
-    ("<secuencia>", ["<accion>", "<secuencia'>"]),
-    # 9
-    ("<secuencia'>", ["->", "<accion>", "<secuencia'>"]),
-    ("<secuencia'>", [EPSILON]),
-    # 10
-    ("<accion>", ["SCAN", "<accion'>"]),
-    ("<accion>", ["CONNECT", "PORT", "TK_NUM"]),
-    ("<accion>", ["BYPASS", "FIREWALL"]),
-    ("<accion>", ["DISABLE", "FIREWALL"]),
-    ("<accion>", ["INJECT", "PAYLOAD", "STRING"]),
-    ("<accion>", ["EXECUTE", "SCRIPT", "STRING"]),
-    ("<accion>", ["EXFIL", "DATA"]),
-    ("<accion>", ["CLEAR", "LOGS"]),
-    # 11
-    ("<accion'>", ["PORTS"]),
-    ("<accion'>", ["PORT", "TK_NUM"]),
-    # 12
-    ("<condicional>", ["IF", "<condicion>", "THEN", "<bloque>", "<condicional'>"]),
-    # 13
-    ("<condicional'>", ["ELSE", "<bloque>"]),
-    ("<condicional'>", [EPSILON]),
-    # 14
-    ("<condicion>", ["ICE_LEVEL", "<comp>", "TK_NUM"]),
-    ("<condicion>", ["FIREWALL", "==", "<estado>"]),
-    # 15
-    ("<comp>", [">"]),
-    ("<comp>", ["<"]),
-    ("<comp>", ["=="]),
-    # 16
-    ("<estado>", ["ACTIVE"]),
-    ("<estado>", ["INACTIVE"]),
+    ("<programa>", ["TARGET", "NODE", "HEX_ADDR", "<bloque>"]),           # R1
+    ("<bloque>", ["{", "<lista_instr>", "}"]),                            # R2
+    ("<lista_instr>", ["<instruccion>", "<lista_instr'>"]),               # R3
+    ("<lista_instr'>", ["<instruccion>", "<lista_instr'>"]),              # R4
+    ("<lista_instr'>", [EPSILON]),                                        # R5
+    ("<instruccion>", ["<secuencia>", ";"]),                              # R6
+    ("<instruccion>", ["<condicional>"]),                                 # R7
+    ("<secuencia>", ["<accion>", "<secuencia'>"]),                        # R8
+    ("<secuencia'>", ["->", "<accion>", "<secuencia'>"]),                 # R9
+    ("<secuencia'>", [EPSILON]),                                          # R10
+    *[("<accion>", derecha) for derecha in _ACCIONES],                    # R11-R18
+    ("<condicional>", ["IF", "<condicion>", "THEN", "<bloque>", "<resto_if>"]),  # R19
+    ("<resto_if>", ["ELSE", "<bloque>"]),                                 # R20
+    ("<resto_if>", [EPSILON]),                                            # R21
+    ("<condicion>", ["ICE_LEVEL", "<op_rel>", "NUM"]),                    # R22
+    ("<condicion>", ["FIREWALL", "==", "<estado>"]),                      # R23
+    ("<op_rel>", [">"]),                                                  # R24
+    ("<op_rel>", ["<"]),                                                  # R25
+    ("<op_rel>", ["=="]),                                                 # R26
+    ("<estado>", ["ACTIVE"]),                                             # R27
+    ("<estado>", ["INACTIVE"]),                                           # R28
 ]
 
 # ---------------------------------------------------------------------------
@@ -132,19 +103,14 @@ def terminals(grammar: Grammar) -> list[str]:
 
 
 def production_label(grammar: Grammar, index: int) -> str:
-    """Número de regla de una alternativa: "3", o "10a", "10b"... si hay varias."""
-    izquierda = grammar[index][0]
-    numero = nonterminals(grammar).index(izquierda) + 1
-    alternativas = [i for i, (izq, _) in enumerate(grammar) if izq == izquierda]
-    if len(alternativas) == 1:
-        return str(numero)
-    return f"{numero}{chr(ord('a') + alternativas.index(index))}"
+    """Nombre de la regla como en el documento: "R1", "R2", ..."""
+    return f"R{index + 1}"
 
 
 def format_production(grammar: Grammar, index: int) -> str:
-    """Texto de una alternativa con su número, p. ej. "10a. <accion> ::= SCAN <accion'>"."""
+    """Texto de una regla con su número, p. ej. "R11  <accion> ::= SCAN PORTS"."""
     izquierda, derecha = grammar[index]
-    return f"{production_label(grammar, index)}. {izquierda} ::= {' '.join(derecha)}"
+    return f"{production_label(grammar, index):<4} {izquierda} ::= {' '.join(derecha)}"
 
 
 # ---------------------------------------------------------------------------
@@ -293,11 +259,11 @@ def find_conflicts(table: LL1Table) -> dict[Cell, list[int]]:
 
 
 def format_grammar(grammar: Grammar) -> str:
-    """Gramática en BNF, una regla numerada por no terminal."""
+    """Gramática en BNF, un no terminal por línea con sus alternativas."""
     lineas: list[str] = []
-    for numero, nt in enumerate(nonterminals(grammar), start=1):
+    for nt in nonterminals(grammar):
         alternativas = [" ".join(d) for izq, d in grammar if izq == nt]
-        prefijo = f"{numero:>2}. {nt} ::= "
+        prefijo = f"{nt} ::= "
         lineas.append(prefijo + alternativas[0])
         for alternativa in alternativas[1:]:
             lineas.append(" " * (len(prefijo) - 2) + "| " + alternativa)
@@ -305,13 +271,14 @@ def format_grammar(grammar: Grammar) -> str:
 
 
 def format_original_grammar() -> str:
-    """Gramática original (con recursión por la izquierda)."""
-    return "Gramática original\n\n" + format_grammar(ORIGINAL_GRAMMAR)
+    """Gramática G1 (con recursión por la izquierda y prefijos comunes)."""
+    return "Gramática G1\n\n" + format_grammar(ORIGINAL_GRAMMAR)
 
 
 def format_ll1_grammar() -> str:
-    """Gramática LL(1) con sus 16 reglas numeradas."""
-    return "Gramática LL(1)\n\n" + format_grammar(LL1_GRAMMAR)
+    """Gramática final G2 con sus 28 reglas numeradas (R1-R28)."""
+    lineas = [format_production(LL1_GRAMMAR, i) for i in range(len(LL1_GRAMMAR))]
+    return "Gramática final G2 (LL(1))\n\n" + "\n".join(lineas)
 
 
 def _formatear_conjunto(simbolos: set[str], orden: list[str]) -> str:

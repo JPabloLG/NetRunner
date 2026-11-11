@@ -33,7 +33,7 @@ def test_tipos_de_token() -> None:
         (TokenType.TK_MENOR, "<", "<"),
         (TokenType.TK_IGUAL, "==", "=="),
         (TokenType.HEX_ADDR, "0xFF", "HEX_ADDR"),
-        (TokenType.TK_NUM, "8080", "TK_NUM"),
+        (TokenType.TK_NUM, "8080", "NUM"),
         (TokenType.STRING, '"x"', "STRING"),
         (TokenType.EOF, "", "$"),
     ],
@@ -103,7 +103,7 @@ def test_programa_valido() -> None:
     r = lex(codigo)
     assert not r.errors
     assert [t.terminal for t in r.tokens] == [
-        "TARGET", "NODE", "HEX_ADDR", "{", "SCAN", "PORTS", "TK_NUM", "->",
+        "TARGET", "NODE", "HEX_ADDR", "{", "SCAN", "PORTS", "NUM", "->",
         "STRING", ";", "}", "$",
     ]
 
